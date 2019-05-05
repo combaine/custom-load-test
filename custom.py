@@ -129,7 +129,11 @@ class Custom(rpc_pb2_grpc.CustomAggregatorServicer):
 
 
 def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=1),
+        # grpc.max_send_message_length grpc.max_receive_message_length
+        options=[('grpc.max_send_message_length', 128 * 1024 * 1024),
+                 ('grpc.max_receive_message_length', 128 * 1024 * 1024)])
     rpc_pb2_grpc.add_CustomAggregatorServicer_to_server(Custom(), server)
     server.add_insecure_port('[::]:50051')
     server.start()
