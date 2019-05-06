@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
+	"os/exec"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +24,63 @@ type PluginCfg map[string]interface{}
 var loadFactor int32 = 1
 
 func main() {
+	var c = make(chan int, 1)
+	var block = make(chan bool)
+	runLoaders(c)
+	go runReporter(c, block)
+	// disable input buffering
+	exec.Command("stty", "-F", "/dev/tty", "cbreak", "min", "1").Run()
+
+	var b = make([]byte, 1)
+	for {
+		os.Stdin.Read(b)
+		block <- true
+	}
+}
+
+func runReporter(c chan int, block chan bool) {
+	var step int32 = 1
+	var count int
+	var i float64
+	var n float64
+	var tm = time.Now()
+	var spent time.Duration
+	fmt.Printf("Step %d ", step)
+	for {
+		select {
+		case count = <-c:
+			n += float64(count)
+		case <-block:
+			spent += time.Now().Sub(tm)
+			<-block
+			tm = time.Now()
+		}
+		if i > 50 {
+			step++
+			spent += time.Now().Sub(tm)
+			tm = time.Now()
+			secs := float64(spent) / float64(time.Second)
+			fmt.Printf("p(%.0f):a(%.3f)/s in %.3f \n", i*n/secs, i/secs, secs)
+			switch step {
+			case 10, 30:
+				atomic.StoreInt32(&loadFactor, 5)
+				fmt.Printf("Current load factor: %dx\n", atomic.LoadInt32(&loadFactor))
+			case 20, 40:
+				atomic.StoreInt32(&loadFactor, 1)
+				fmt.Printf("Current load factor: %dx\n", atomic.LoadInt32(&loadFactor))
+			}
+			fmt.Printf("Step %d ", step)
+
+			i = 0
+			n = 0
+			spent = 0
+		}
+		fmt.Print(".")
+		i++
+	}
+}
+
+func runLoaders(c chan int) {
 	localAddresses := []string{
 		"[::1]", "127.0.0.1", "127.0.0.2", "127.0.0.3",
 		"127.0.0.4", "127.0.0.5", "127.0.0.6", "127.0.0.7"}
@@ -41,7 +100,6 @@ func main() {
 		}
 		connList = append(connList, conn)
 	}
-	var c = make(chan int, 16)
 	var tokens = make(chan int, 16)
 	go func() {
 		for {
@@ -55,34 +113,7 @@ func main() {
 		}
 
 	}()
-	var step int32 = 1
-	var i float64
-	var n float64
-	var tm = time.Now()
-	fmt.Printf("Step %d ", step)
-	for {
-		n += float64(<-c)
-		if i > 50 {
-			step++
-			spent := time.Now().Sub(tm)
-			tm = time.Now()
-			secs := float64(spent) / float64(time.Second)
-			fmt.Printf("p(%.0f):a(%.3f)/s in %.3f \n", i*n/secs, i/secs, secs)
-			i = 0
-			n = 0
-			switch step {
-			case 10, 30:
-				atomic.StoreInt32(&loadFactor, 5)
-				fmt.Printf("Current load factor: %d\n", atomic.LoadInt32(&loadFactor))
-			case 20, 40:
-				atomic.StoreInt32(&loadFactor, 1)
-				fmt.Printf("Current load factor: %d\n", atomic.LoadInt32(&loadFactor))
-			}
-			fmt.Printf("Step %d ", step)
-		}
-		fmt.Print(".")
-		i++
-	}
+
 }
 
 func fire(conn *grpc.ClientConn, ch chan int) {
