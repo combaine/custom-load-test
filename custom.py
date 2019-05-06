@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Aggregator with extensions support"""
 
+import contextlib
 import importlib
 import logging
+import multiprocessing
 import os
+import socket
 import time
 from concurrent import futures
 
@@ -12,6 +15,8 @@ import msgpack
 
 import rpc_pb2
 import rpc_pb2_grpc
+
+_PROCESS_COUNT = 4
 
 
 class Custom(rpc_pb2_grpc.CustomAggregatorServicer):
@@ -128,20 +133,64 @@ class Custom(rpc_pb2_grpc.CustomAggregatorServicer):
         return rpc_pb2.AggregateGroupResponse(result=result_bytes)
 
 
-def serve():
-    server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=1),
-        # grpc.max_send_message_length grpc.max_receive_message_length
-        options=[('grpc.max_send_message_length', 128 * 1024 * 1024),
-                 ('grpc.max_receive_message_length', 128 * 1024 * 1024)])
+@contextlib.contextmanager
+def _reserve_port():
+    """Reserve a port for all subprocesses to use."""
+    sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    if sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) != 1:
+        raise RuntimeError("Failed to set SO_REUSEPORT.")
+    sock.bind(('', 50051))
+    try:
+        yield sock.getsockname()[1]
+    finally:
+        sock.close()
+
+
+def _run_server(bind_address):
+    """Start a server in a subprocess."""
+    logging.info('Starting new server.')
+    options = (
+        ('grpc.so_reuseport', 1),
+        ('grpc.max_send_message_length', 128 * 1024 * 1024),
+        ('grpc.max_receive_message_length', 128 * 1024 * 1024),
+    )
+
+    # WARNING: This example takes advantage of SO_REUSEPORT. Due to the
+    # limitations of manylinux1, none of our precompiled Linux wheels currently
+    # support this option. (https://github.com/grpc/grpc/issues/18210). To take
+    # advantage of this feature, install from source with
+    # `pip install grpcio --no-binary grpcio`.
+
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4), options=options)
     rpc_pb2_grpc.add_CustomAggregatorServicer_to_server(Custom(), server)
-    server.add_insecure_port('[::]:50051')
+    server.add_insecure_port(bind_address)
     server.start()
+    _wait_forever(server)
+
+
+def _wait_forever(server):
     try:
         while True:
             time.sleep(60 * 60 * 24)
     except KeyboardInterrupt:
         server.stop(0)
+
+
+def serve():
+    with _reserve_port() as port:
+        bind_address = '[::]:{}'.format(port)
+        logging.info("Binding to '%s'", bind_address)
+        workers = []
+        for _ in range(_PROCESS_COUNT):
+            # NOTE: It is imperative that the worker subprocesses be forked before
+            # any gRPC servers start up. See
+            # https://github.com/grpc/grpc/issues/16001 for more details.
+            worker = multiprocessing.Process(target=_run_server, args=(bind_address, ))
+            worker.start()
+            workers.append(worker)
+        for worker in workers:
+            worker.join()
 
 
 if __name__ == '__main__':

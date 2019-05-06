@@ -4,6 +4,7 @@ go 1.12
 
 require (
 	github.com/golang/protobuf v1.3.1
+	github.com/jmcvetta/randutil v0.0.0-20150817122601-2bb1b664bcff
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/philhofer/fwd v1.0.0 // indirect
 	github.com/tinylib/msgp v1.1.0

@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync/atomic"
 	"time"
 
+	"github.com/jmcvetta/randutil"
 	"github.com/sakateka/custom-load/payload"
 	"github.com/vmihailenco/msgpack"
 	"google.golang.org/grpc"
@@ -17,51 +19,88 @@ import (
 // PluginCfg ...
 type PluginCfg map[string]interface{}
 
+var loadFactor int32 = 1
+
 func main() {
-	conn, err := grpc.Dial(
-		"localhost:50051",
+	localAddresses := []string{
+		"[::1]", "127.0.0.1", "127.0.0.2", "127.0.0.3",
+		"127.0.0.4", "127.0.0.5", "127.0.0.6", "127.0.0.7"}
+	var connList []*grpc.ClientConn
+	options := []grpc.DialOption{
 		grpc.WithInsecure(),
 		grpc.WithDefaultCallOptions(
 			grpc.MaxCallSendMsgSize(1024*1024*128),
 			grpc.MaxCallRecvMsgSize(1024*1024*128),
 		),
-	)
-	if err != nil {
-		log.Fatalf("Failed to dial grpc server: %v", err)
 	}
-	var c = make(chan int, 12)
-	var tokens = make(chan int, 12)
+	for _, ip := range localAddresses {
+		addr := fmt.Sprintf("%s:50051", ip)
+		conn, err := grpc.Dial(addr, options...)
+		if err != nil {
+			log.Fatalf("Failed to dial grpc server: %v", err)
+		}
+		connList = append(connList, conn)
+	}
+	var c = make(chan int, 16)
+	var tokens = make(chan int, 16)
 	go func() {
 		for {
-			tokens <- 0
-			go func() {
-				fire(conn, c)
-				defer func() { <-tokens }()
-			}()
+			for _, conn := range connList {
+				tokens <- 0
+				go func(cc *grpc.ClientConn) {
+					fire(cc, c)
+					defer func() { <-tokens }()
+				}(conn)
+			}
 		}
 
 	}()
+	var step int32 = 1
 	var i float64
 	var n float64
 	var tm = time.Now()
+	fmt.Printf("Step %d ", step)
 	for {
 		n += float64(<-c)
-		i++
-		if i > 60 {
+		if i > 50 {
+			step++
 			spent := time.Now().Sub(tm)
 			tm = time.Now()
-			secs := float64(spent / time.Second)
-			fmt.Printf("p(%f):a(%f)/s in %s \n", i*n/secs, i/secs, spent)
+			secs := float64(spent) / float64(time.Second)
+			fmt.Printf("p(%.0f):a(%.3f)/s in %.3f \n", i*n/secs, i/secs, secs)
 			i = 0
 			n = 0
+			switch step {
+			case 10, 30:
+				atomic.StoreInt32(&loadFactor, 5)
+				fmt.Printf("Current load factor: %d\n", atomic.LoadInt32(&loadFactor))
+			case 20, 40:
+				atomic.StoreInt32(&loadFactor, 1)
+				fmt.Printf("Current load factor: %d\n", atomic.LoadInt32(&loadFactor))
+			}
+			fmt.Printf("Step %d ", step)
 		}
 		fmt.Print(".")
+		i++
 	}
 }
 
 func fire(conn *grpc.ClientConn, ch chan int) {
 	c := payload.NewCustomAggregatorClient(conn)
-	hosts := 10 + rand.Intn(200)
+	choices := []randutil.Choice{
+		randutil.Choice{Weight: 60, Item: 20},
+		randutil.Choice{Weight: 20, Item: 50},
+		randutil.Choice{Weight: 15, Item: 200},
+		randutil.Choice{Weight: 5, Item: 400},
+	}
+
+	result, err := randutil.WeightedChoice(choices)
+	if err != nil {
+		log.Fatalf("Error while get random weighted chose: %v", err)
+	}
+
+	currentLoadFactor := int(atomic.LoadInt32(&loadFactor))
+	hosts := 10 + rand.Intn(currentLoadFactor*result.Item.(int))
 	aggHosts := doParsing(c, hosts)
 	respBytes := doAggregate(c, aggHosts)
 
@@ -90,9 +129,10 @@ func getConfig() []byte {
 func doParsing(c payload.CustomAggregatorClient, count int) [][]byte {
 
 	var aggHosts [][]byte
+	currentLoadFactor := int(atomic.LoadInt32(&loadFactor))
 	for i := 0; i < count; i++ {
-		gauges := 20 + rand.Intn(50)
-		timings := 20 + rand.Intn(30)
+		gauges := 10 + rand.Intn(currentLoadFactor*40)
+		timings := 10 + rand.Intn(currentLoadFactor*20)
 		text := payload.GenPayload(gauges, timings)
 		req := &payload.AggregateHostRequest{
 			Task: &payload.Task{
