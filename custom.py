@@ -187,8 +187,9 @@ def serve():
             # any gRPC servers start up. See
             # https://github.com/grpc/grpc/issues/16001 for more details.
             worker = multiprocessing.Process(target=_run_server, args=(bind_address, ))
-            worker.start()
             workers.append(worker)
+        for worker in workers:
+            worker.start()
         for worker in workers:
             worker.join()
 
