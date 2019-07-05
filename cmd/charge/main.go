@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/combaine/custom-load-test/payload"
 	"github.com/jmcvetta/randutil"
-	"github.com/sakateka/custom-load/payload"
 	"github.com/vmihailenco/msgpack"
 	"google.golang.org/grpc"
 )

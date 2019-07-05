@@ -1,4 +1,4 @@
-module github.com/sakateka/custom-load
+module github.com/combaine/custom-load-test
 
 go 1.12
 
