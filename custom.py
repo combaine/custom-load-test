@@ -87,7 +87,7 @@ class Custom(rpc_pb2_grpc.CustomAggregatorServicer):
         return klass
 
     def GetConfig(self, request):
-        cfg = msgpack.unpackb(request.task.config, raw=False)
+        cfg = msgpack.unpackb(request.task.config, raw=False, strict_map_key=False)
         logger = logging.LoggerAdapter(self.log, {'tid': request.task.id})
         cfg['logger'] = logger
         return cfg
@@ -120,7 +120,7 @@ class Custom(rpc_pb2_grpc.CustomAggregatorServicer):
         Receives a list of results from the aggregate_host,
         and performs aggregation by group
         """
-        payload = [msgpack.unpackb(i) for i in request.payload]
+        payload = [msgpack.unpackb(i, strict_map_key=False) for i in request.payload]
         cfg = self.GetConfig(request)
         logger = cfg['logger']
 

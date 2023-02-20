@@ -45,6 +45,7 @@ func runReporter(c chan int, block chan bool) {
 	var n float64
 	var tm = time.Now()
 	var spent time.Duration
+	fmt.Println("p - parsing, a - aggregations")
 	fmt.Printf("Step %d ", step)
 	for {
 		select {
